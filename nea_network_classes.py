@@ -1,22 +1,31 @@
 import numpy as np
 import scipy.constants as spc
 import copy as cp
+import multiprocessing as mpr
+
+from brian2 import *
+import nea_parameters as neapars
+import nea_classes as neamod
 
 # Custom modules
 import os,sys
 sys.path.append(os.path.join(os.path.expanduser('~'),'Ongoing.Projects/pycustommodules'))
 import save_utils as svu
 import general_utils as gu
-
-from brian2 import *
-import nea_parameters as neapars
-import nea_classes as neamod
+import brian_utils as bu
 
 ## Warning handling
 import warnings as wrn
 wrn.filterwarnings("ignore")
 BrianLogger.suppress_name('resolution_conflict')
 
+#-----------------------------------------------------------------------------------------------------------------------
+# Testing-related modules (temporary)
+#-----------------------------------------------------------------------------------------------------------------------
+import matplotlib.pyplot as plt
+
+# -----------------------------------------------------------------------------------------------------------------------
+safe_threads = lambda n,safe_cpu : int(min(max(1,n),mpr.cpu_count()-1)) if safe_cpu else int(min(max(1,n),mpr.cpu_count()))  ## This will assure that the number of threads is 1<=n<=n_cpu-1
 # -----------------------------------------------------------------------------------------------------------------------
 # NEA Network Simulator Main Class
 # -----------------------------------------------------------------------------------------------------------------------
@@ -618,11 +627,16 @@ class NEAGroup(object):
             if k=='gjc':
                 module.namespace = {'w': pars['conn']['jgg']}
 
-    @check_units(duration=second, sim_dt=second, rate_dt=second, transient=second, brp_dt=second)
+    @check_units(duration=second, sim_dt=second, rate_dt=second,
+                 mon_neu_dt=second,mon_ecs_dt=second,mon_syn_dt=second,
+                 transient=second, brp_dt=second)
     def simulate(self,pname=None,pvals=None,
                  stimtype='full',rho_baseline=None,round_decimals=None,
                  duration=0.1*second,sim_dt=0.1*ms,
                  include_ICs=False,ICs=None,
+                 mon_neu={'e': [], 'i': [], 'g': []}, mon_neu_dt=0.5*ms,
+                 mon_ecs={'e': [], 'i': [], 'g': []}, mon_ecs_dt=0.5*ms,
+                 mon_syn={'ee': [], 'ie': [], 'ei': [], 'ii': []}, mon_syn_dt=0.5*ms,
                  mon_rate={'e': True, 'i': False, 'g': False},rate_dt=0.1*ms,
                  mon_spks={'e': False, 'i': False, 'g': False},transient=0.*second,
                  record_spks={'e': True, 'i': True, 'g': True},num_to_record=None,
@@ -669,426 +683,198 @@ class NEAGroup(object):
         defaultclock.dt = sim_dt
 
         # Delete
-        device.delete(force=True)
 
         # Modules names (does NOT include monitors if called on a single run)
         modules = [m.name for m in iter(self.network.objects)]
 
-        # Default settings for monitors: No monitors
-        if self._ngn_setup=='single-astro':
-            # Monitors' settings
-            mon_rate_default = {'e': False, 'g': False}
-            mon_spks_default = {'e': False, 'g': False}
-            mon_brp_default = {}
-            num_to_record_default = {'e': self.pars['N']['e'], 'g': self.pars['N']['g']}
-            syn_to_record_default = {}
-            mon_keys = ['e','g']
-            # DEBUG
-            # gamma_mon = StateMonitor(self.network['Ss'],variables=['gamma_S'],record=np.arange(10))
-        elif self._ngn_setup=='model-A':
-            # TODO: Stimulus settings
-            # Monitor setting
+        device.delete(force=True)      # Default settings for monitors: No monitors
+        if self._nea_setup=='l5e+ecs':
+            # Monitor settings (only neuronal, ecs and synaptic monitors allowed)
+            mon_neu_default = {'e': ['v','N_i','K_i','C_i']}
+            mon_ecs_default = {'e': ['N_e','K_e','C_e']}
+            mon_syn_default = {'ee': ['Nt_s']}
             mon_rate_default = {'e': False, 'i': False, 'g': False}
             mon_spks_default = {'e': False, 'i': False, 'g': False}
-            mon_brp_default = {'ee': False, 'ie': False, 'ei': False, 'ii': False}
-            dt_rate_mon = {'e': 0.1*ms, 'i': 0.1*ms, 'g': 0.1*ms}
-            num_to_record_default = {'e': self.pars['N']['e'], 'i': self.pars['N']['i'], 'g': self.pars['N']['g']}
-            syn_to_record_default = dict(zip(['ee','ie','ei','ii'],[0,0,0,0]))
-            mon_keys = ['e', 'i', 'g']
+            num_to_record_default = {'e': self.pars['N']['e']}
+            syn_to_record_default = {}
+
+
+        # elif self._nea_setup=='single-astro':
+        #     # Monitors' settings
+        #     mon_rate_default = {'e': False, 'g': False}
+        #     mon_spks_default = {'e': False, 'g': False}
+        #     mon_brp_default = {}
+        #     num_to_record_default = {'e': self.pars['N']['e'], 'g': self.pars['N']['g']}
+        #     syn_to_record_default = {}
+        #     mon_keys = ['e','g']
+        #     # DEBUG
+        #     # gamma_mon = StateMonitor(self.network['Ss'],variables=['gamma_S'],record=np.arange(10))
+        # elif self._ngn_setup=='model-A':
+        #     # TODO: Stimulus settings
+        #     # Monitor setting
+        #     mon_rate_default = {'e': False, 'i': False, 'g': False}
+        #     mon_spks_default = {'e': False, 'i': False, 'g': False}
+        #     mon_brp_default = {'ee': False, 'ie': False, 'ei': False, 'ii': False}
+        #     dt_rate_mon = {'e': 0.1*ms, 'i': 0.1*ms, 'g': 0.1*ms}
+        #     num_to_record_default = {'e': self.pars['N']['e'], 'i': self.pars['N']['i'], 'g': self.pars['N']['g']}
+        #     syn_to_record_default = dict(zip(['ee','ie','ei','ii'],[0,0,0,0]))
+        #     mon_keys = ['e', 'i', 'g']
 
         # Update monitors with custom-given options
+        mon_neu = gu.merge_dicts(mon_neu_default,mon_neu) if mon_neu != None else mon_neu_default
+        mon_ecs = gu.merge_dicts(mon_ecs_default,mon_ecs) if mon_ecs != None else mon_ecs_default
+        mon_syn = gu.merge_dicts(mon_syn_default,mon_syn) if mon_syn != None else mon_syn_default
         mon_rate = gu.merge_dicts(mon_rate_default,mon_rate) if mon_rate != None else mon_rate_default
         mon_spks = gu.merge_dicts(mon_spks_default,mon_spks) if mon_spks != None else mon_spks_default
-        mon_brp = gu.merge_dicts(mon_brp_default, mon_brp) if mon_brp!=None else mon_brp_default
-        # Adjust mon_brp: if 'e' or 'i' keys are specified, automatically set to that value the 'xe' ('xi') synapses
-        for k in ['e','i']:
-            if k in mon_brp:
-                for x in ['e','i']:
-                    mon_brp[x+k] = mon_brp[k]
+        # mon_brp = gu.merge_dicts(mon_brp_default, mon_brp) if mon_brp!=None else mon_brp_default
+        # # Adjust mon_brp: if 'e' or 'i' keys are specified, automatically set to that value the 'xe' ('xi') synapses
+        # for k in ['e','i']:
+        #     if k in mon_brp:
+        #         for x in ['e','i']:
+        #             mon_brp[x+k] = mon_brp[k]
+        #         # Delete 'e' or 'i' key and deals with individual synapse types
+        #         mon_brp.pop(k)
+        # Adjust mon_syn: if 'e' or 'i' keys are specified, automatically set to that value the 'xe' ('xi') synapses
+        for k in ['e', 'i']:
+            if k in mon_syn:
+                for x in ['e', 'i']:
+                    mon_syn[x+k] = mon_syn[k]
                 # Delete 'e' or 'i' key and deals with individual synapse types
-                mon_brp.pop(k)
-        # Number of neurons to record
-        if (num_to_record!=None):
-            assert (type(num_to_record)==type({}))and(all(item in num_to_record_default.keys() for item in num_to_record.keys())),"num_to_record must be a dictionary with keys in "+num_to_record_default.keys()
-        num_to_record = gu.merge_dicts(num_to_record_default,num_to_record) if num_to_record != None else num_to_record_default
-        # Set the max number of synapses of each type to record per recorded neuron
-        if (syn_to_record!=None):
-            assert (type(syn_to_record)==type({}))and(all(item in syn_to_record_default.keys() for item in syn_to_record.keys())),"syn_to_record must be a dictionary with keys in "+syn_to_record_default.keys()
-        syn_to_record = gu.merge_dicts(syn_to_record_default,syn_to_record) if syn_to_record != None else syn_to_record_default
-        # Adjust syn_to_record if 'e' or 'i' keys are specified, identifying the number of 'xe' ('xi') synapses based on the ratio in the network
-        for k in ['e','i']:
-            # The following is only for the case where syn_to_record are specified by 'e' and 'i'
-            if k in syn_to_record:
-                nksyn_total = self.pars['N']['e'+k]+self.pars['N']['i'+k]
-                # Compute fraction of 'ek' synapses
-                fraction = self.pars['N']['e'+k]/nksyn_total
-                syn_to_record['e'+k] = int(np.round(fraction*syn_to_record[k]))
-                # The complementary synapses 'ik' are the specified 'k' synapses - the number of 'ek' synapses
-                syn_to_record['i'+k] = syn_to_record[k] - syn_to_record['e'+k]
-                # Delete 'e' or 'i' key and deals with individual synapse types
-                syn_to_record.pop(k)
+                mon_syn.pop(k)
 
-        # Add monitors (only for cells)
-        for k, flag_mon in mon_rate.items():
-            # Only add if the number N_k>0
-            if flag_mon and (k.upper() in modules) and (self.pars['N'][k] > 0):
-                if self.pars['geom']['N_clusters']<2:
-                    self.network.add(PopulationRateMonitor(self.network[k.upper()], name=k.upper()+'_poprate'))
-                else:
-                    for cn,ci in enumerate(self.pars['geom'][k+'_cluster']):
-                        # Because subgroups require at the moment only contiguous indexes, you must use ci[0]:ci[-1]
-                        # TODO: does not check whether ci is of size 1: in this case it might not work
-                        self.network.add(PopulationRateMonitor(self.network[k.upper()][ci[0]:ci[-1]], name=k.upper() + '_poprate_'+str(cn)))
-        for k, flag_mon in mon_spks.items():
-            # Only add if the number N_k>0
-            if flag_mon and (k.upper() in modules) and (self.pars['N'][k] > 0):
-                if transient>0:
-                    # Simple error checking: you cannot estimate count correctly if you don't record all spikes with transient>0
-                    assert record_spks[k],"Spike count cannot be estimated correctly when transient>0 and mon_spks['"+k+"'] is False: set it to True instead"
-                # Specify the first num_to_record[k] cells to record spikes from (default: all cells will be recorded)
-                if self.pars['geom']['N_clusters']<2:
-                    # 'geom' is only specified in the ngn setup, but this assignment is required also for single-astro configurations
-                    self.network.add(SpikeMonitor(self.network[k.upper()][:int(num_to_record[k])], name=k.upper()+'_spikes', record=record_spks[k]))
-                else:
-                    for cn,ci in enumerate(self.pars['geom'][k+'_cluster']):
-                        # TODO: does not check whether ci is of size 1: in this case it might not work
-                        # Indexes of selected cells to record spikes from
-                        # Because subgroups require at the moment only contiguous indexes, you must use nsel[0]:nsel[-1]
-                        nsel = ci[:int(num_to_record[k])]
-                        self.network.add(SpikeMonitor(self.network[k.upper()][nsel[0]:nsel[-1]], name=k.upper() + '_spikes_'+str(cn), record=record_spks[k]))
-        # Add synaptic monitors. Because brp is deduced from gamma which is currently glia-specific rather than synpatic-specific (because we assume that
-        # all synapses under the same astrocyte have the same gamma), it first identifies all glia cells that we need to record, then extrapolate occurrences,
-        # and create monitors accordingly, for each glia-cell-gamma
-        if any(mon_brp.values()):
-            mon_brp_names = [] # monitor_brp names (for easy retrieval later)
-            if self.pars['geom']['N_clusters']<2:
-                glial_indexes = {'ee': np.asarray([], dtype=int),
-                                 'ie': np.asarray([], dtype=int),
-                                 'ei': np.asarray([], dtype=int),
-                                 'ii': np.asarray([], dtype=int),
-                                 # Correspondent synapse indexes (we could use 2xN arrays in 'ee' but we separate for clarity)
-                                 'ee_to_record':np.asarray([],dtype=int),
-                                 'ie_to_record':np.asarray([],dtype=int),
-                                 'ei_to_record':np.asarray([],dtype=int),
-                                 'ii_to_record':np.asarray([],dtype=int)}
-                for k, flag_mon in mon_brp.items():
-                    # Only consider monitors for synapse type when (1) type is specified; (2) number to record is >0; (3) type is in network; (4) the synapse is under gliotransmission
-                    if flag_mon and (syn_to_record[k]>0) and (k in modules) and (self.pars['N']['g'] > 0) and (self._glia_to_syn[k]) and (not self.__glia_block):
-                        # Consider all synapses in the recorded neurons of k[-1] type
-                        to_record = np.where(self.pars['edges'][k][0]<num_to_record[k[-1]])[0] # Logical indexes of all synapses in the recorded neural population
-                        if len(to_record) == 0:
-                            continue
-                        # Narrow it down to first syn_to_record indexes per neurons
-                        # neu_idx corresponds in our case to np.arange(num_to_record[k]) or the maximum subset
-                        neu_idx,sidx,counts = np.unique(self.pars['edges'][k][0][to_record],return_inverse=True,return_counts=True) # Retrieve indexes to count synapses by neuron index
-                        # Because neu_idx are ordered contiguously, the index of element position in neu_idx also is almost always the actual neural index value in the network, but there might be situations where this is not true
-                        # and accordingly we consider enumerate, distinguishing between neuron index sample_envs(ni) and its position (i)
-                        # to_record = np.sort(np.concatenate([np.nonzero(sidx==ni)[0][:np.min([counts[i],syn_to_record[k]])] for i,ni in enumerate(neu_idx)])) # Synapses are numbered internally from 0-to-N_syn
-                        to_record = to_record[np.sort(np.concatenate([np.nonzero(sidx == ni)[0][:np.min([counts[i],syn_to_record[k]])] for i,ni in enumerate(neu_idx)]))]  # Synapses are numbered internally from 0-to-N_syn
-                        glial_indexes[k+'_to_record'] = self.pars['edges'][k+'g'][1][to_record]
-                        glial_indexes[k] = self.pars['edges'][k+'g'][0][to_record]   # All glia cells associated with all the synapses to be recorded
-                # Process indexes and build related monitors: The way we do so, is by identifying the unique synapses in terms of gamma_S
-                for k in ['e','i']:
-                    if any([kk[-1]==k for kk in glial_indexes.keys()]):
-                        # First considers the concatenations of all glial indexes from the same presynaptic type neuron
-                        glial_indexes[k] = np.concatenate([glial_indexes[x+k] for x in ['e','i']])   # Will always work, regardless of the content of glial_indexes
-                        # # Considers glial_indexes and retrieve unique elements
-                        # _, syn_indexes, glial_indexes[k + '_weights'] = np.unique(glial_indexes[k], return_index=True, return_counts=True)
-                        glial_indexes[k + '_to_record'] = np.concatenate([glial_indexes[x + k + '_to_record'] for x in ['e','i']])
-                        # Considers glial_indexes and retrieve unique elements
-                        _,syn_indexes,glial_indexes[k + '_weights'] = np.unique(glial_indexes[k],return_index=True,return_counts=True)
-                        if np.size(syn_indexes) > 0:
-                            # Because we first look into 'ee' connections, finds which indexes are there
-                            idx = np.isin(glial_indexes[k][syn_indexes],np.unique(glial_indexes['e' + k]))
-                            ek_syn_idx = glial_indexes[k + '_to_record'][syn_indexes[idx]]
-                            ik_syn_idx = glial_indexes[k + '_to_record'][syn_indexes[~idx]]
-                            # Save synpatic indexes for proper reconstruction (later)
-                            glial_indexes['e' + k + '_index'] = np.size(ek_syn_idx)
-                            glial_indexes['i' + k + '_index'] = np.size(ik_syn_idx)
-                        # if np.size(syn_indexes)>0:
-                        #     # "Population" index needed to properly identify, next, which synapses to record from one group or another
-                        #     pindex = np.size(glial_indexes['e' + k])
-                        #     # Logical indexes
-                        #     idx = syn_indexes<pindex
-                        #     # Those syn_indexes below pindex pertain to synapses 'e'+k type
-                        #     ek_syn_idx = syn_indexes[idx]
-                        #     # The remaining ones, to 'i'+k
-                        #     ik_syn_idx = syn_indexes[~idx]
-                        #     # Save synpatic indexes for proper reconstruction (later)
-                        #     glial_indexes['e'+k+'_index'] = np.size(ek_syn_idx)
-                        #     glial_indexes['i'+k+'_index'] = np.size(ik_syn_idx)
-                            # Generate monitors
-                            if np.size(ek_syn_idx)>0:
-                                mon_brp_names.append('brp_e'+k)
-                                self.network.add(StateMonitor(self.network['e' + k], variables='gamma_S', record=ek_syn_idx, name=mon_brp_names[-1], dt=brp_dt))
-                            if np.size(ik_syn_idx)>0:
-                                mon_brp_names.append('brp_i'+k)
-                                self.network.add(StateMonitor(self.network['i' + k], variables='gamma_S', record=ik_syn_idx, name=mon_brp_names[-1], dt=brp_dt))
-            else:
-                # The handling of the clustered case is a bit more involved: We first allocate empty lists of as many elements as N_clusters for all keys in glial_indexes
-                # Then we save for each element, the outcome of the same procedure above.
-                # glial_indexes = dict.fromkeys(['e','i','e_weights','i_weights','ee','ie','ei','ii','ee_index','ie_index','ei_index','ii_index'],[None]*self.pars['geom']['N_clusters'])
-                glial_indexes = {}
-                for cn in range(self.pars['geom']['N_clusters']):
-                    # TODO: does not check whether ci is of size 1: in this case it might not work
-                    # Indexes of selected cells to record spikes from
-                    # Because subgroups require at the moment only contiguous indexes, you must use nsel[0]:nsel[-1]
-                    glial_indexes[cn] = {# Actual glial indexes per synapse type
-                                         'ee': np.asarray([], dtype=int),
-                                         'ie': np.asarray([], dtype=int),
-                                         'ei': np.asarray([], dtype=int),
-                                         'ii': np.asarray([], dtype=int),
-                                         # Correspondent synapse indexes (we could use 2xN arrays in 'ee' but we separate for clarity)
-                                         'ee_to_record': np.asarray([], dtype=int),
-                                         'ie_to_record': np.asarray([], dtype=int),
-                                         'ei_to_record': np.asarray([], dtype=int),
-                                         'ii_to_record': np.asarray([], dtype=int)}
-                    for k, flag_mon in mon_brp.items():
-                        # Only consider monitors for synapse type when (1) type is specified; (2) number to record is >0; (3) type is in network; (4) the synapse is under gliotransmission
-                        if flag_mon and (syn_to_record[k]>0) and (k in modules) and (self.pars['geom']['N_g_cluster'][cn] > 0) and (self._glia_to_syn[k]) and (not self.__glia_block):
-                            nsel = self.pars['geom'][k[-1]+'_cluster'][cn][:int(num_to_record[k[-1]])]
-                            # Retrieve corrected indexes in case of heterogeneous synapses
-                            from_neurons,to_neurons,from_glia,to_glia,to_synapses,_ = tripartiteIndexing(self.pars['edges'][k],self.pars['edges']['g'+k],self.pars['edges'][k+'g'],self.pars['geom']['g_cluster'],
-                                                                                                         shared=(self.pars['N']['g'] > 0) and (self._syn_to_glia[k]) and (not self.__glia_block),
-                                                                                                         gliot=(self.pars['N']['g'] > 0) and (self._glia_to_syn[k]) and (not self.__glia_block))
-                            # Consider all synapses in the recorded neurons of k[-1] type: to_record provides associated presynaptic neurons
-                            to_record = np.where(np.logical_and(from_neurons>=nsel[0],from_neurons<nsel[-1]+1))[0] # Indexes of all synapses in the recorded neural population
-                            # Skip handling if there are no synapses in this case
-                            if len(to_record)==0:
-                                continue
-                            # Narrow it down to first syn_to_record indexes per neurons
-                            # neu_idx corresponds in our case to np.arange(num_to_record[k]) or the maximum subset
-                            neu_idx,sidx,counts = np.unique(from_neurons[to_record],return_inverse=True,return_counts=True) # Retrieve indexes to count synapses by neuron index
-                            # Because neu_idx are ordered contiguously, the index of element position in neu_idx also is almost always the actual neural index value in the network, but there might be situations where this is not true
-                            # and accordingly we consider enumerate, distinguishing between neuron index (ni) and its position (i) -- here we use this information since we can start with neuron indexes >0
-                            # Convert into true synaptic indexes
-                            to_record = to_record[np.sort(np.concatenate([np.nonzero(sidx==i)[0][:np.min([counts[i],syn_to_record[k]])] for i,ni in enumerate(neu_idx)]))] # Synapses are numbered internally from 0-to-N_syn
-                            glial_indexes[cn][k+'_to_record'] = to_synapses[to_record] # Store synapse all possible indexes to record from, i.e. edges[k+'g'][-1][to_record] will provide the right synapses
-                            glial_indexes[cn][k] = from_glia[to_record]   # All glia cells associated with all the synapses to be recorded
-                    # Process indexes and build related monitors: The way we do so, is by identifying the unique synapses in terms of gamma_S
-                    for k in ['e','i']:
-                        if any([kk[-1]==k for kk in glial_indexes[cn].keys()]):
-                            # First considers the concatenations of all glial indexes from the same presynaptic type neuron
-                            glial_indexes[cn][k] = np.concatenate([glial_indexes[cn][x+k] for x in ['e','i']])   # Will always work, regardless of the content of glial_indexes
-                            # Save all possible indexes of synapses to record
-                            glial_indexes[cn][k+'_to_record'] = np.concatenate([glial_indexes[cn][x+k+'_to_record'] for x in ['e','i']])
-                            # Considers glial_indexes and retrieve unique elements
-                            _, syn_indexes, glial_indexes[cn][k + '_weights'] = np.unique(glial_indexes[cn][k], return_index=True, return_counts=True)
-                            if np.size(syn_indexes)>0:
-                                # Because we first look into 'ee' connections, finds which indexes are there
-                                idx = np.isin(glial_indexes[cn][k][syn_indexes],np.unique(glial_indexes[cn]['e' + k]))
-                                ek_syn_idx = glial_indexes[cn][k+'_to_record'][syn_indexes[idx]]
-                                ik_syn_idx = glial_indexes[cn][k+'_to_record'][syn_indexes[~idx]]
-                                # Save synpatic indexes for proper reconstruction (later)
-                                glial_indexes[cn]['e'+k+'_index'] = np.size(ek_syn_idx)
-                                glial_indexes[cn]['i'+k+'_index'] = np.size(ik_syn_idx)
-                                # # DEBUG
-                                # print(ek_syn_idx,glial_indexes[cn][k+'_weights'])
-                                # Generate monitors
-                                if np.size(ek_syn_idx)>0:
-                                    mon_brp_names.append('brp_e'+k+'_'+str(cn))
-                                    self.network.add(StateMonitor(self.network['e' + k], variables='gamma_S', record=ek_syn_idx, name=mon_brp_names[-1], dt=brp_dt))
-                                if np.size(ik_syn_idx)>0:
-                                    mon_brp_names.append('brp_i'+k+'_'+str(cn))
-                                    self.network.add(StateMonitor(self.network['i' + k], variables='gamma_S', record=ik_syn_idx, name=mon_brp_names[-1], dt=brp_dt))
+        # # TODO: Number of cells and synapses to record: Only relevant once the Parameters are finalized
+        # # Number of neurons to record
+        # if (num_to_record!=None):
+        #     assert (type(num_to_record)==type({}))and(all(item in num_to_record_default.keys() for item in num_to_record.keys())),"num_to_record must be a dictionary with keys in "+num_to_record_default.keys()
+        # num_to_record = gu.merge_dicts(num_to_record_default,num_to_record) if num_to_record != None else num_to_record_default
+        #
+        # # Set the max number of synapses of each type to record per recorded neuron
+        # if (syn_to_record!=None):
+        #     assert (type(syn_to_record)==type({}))and(all(item in syn_to_record_default.keys() for item in syn_to_record.keys())),"syn_to_record must be a dictionary with keys in "+syn_to_record_default.keys()
+        # syn_to_record = gu.merge_dicts(syn_to_record_default,syn_to_record) if syn_to_record != None else syn_to_record_default
+        # # Adjust syn_to_record if 'e' or 'i' keys are specified, identifying the number of 'xe' ('xi') synapses based on the ratio in the network
+        # for k in ['e','i']:
+        #     # The following is only for the case where syn_to_record are specified by 'e' and 'i'
+        #     if k in syn_to_record:
+        #         nksyn_total = self.pars['N']['e'+k]+self.pars['N']['i'+k]
+        #         # Compute fraction of 'ek' synapses
+        #         fraction = self.pars['N']['e'+k]/nksyn_total
+        #         syn_to_record['e'+k] = int(np.round(fraction*syn_to_record[k]))
+        #         # The complementary synapses 'ik' are the specified 'k' synapses - the number of 'ek' synapses
+        #         syn_to_record['i'+k] = syn_to_record[k] - syn_to_record['e'+k]
+        #         # Delete 'e' or 'i' key and deals with individual synapse types
+        #         syn_to_record.pop(k)
+
+        # TODO: Add rates and spike monitors for
+        for k, vars in mon_neu.items():
+            if (len(vars)>0) and (k.upper() in modules) and (self.pars['N'][k]>0):
+                self.network.add(StateMonitor(self.network[k.upper()],variables=vars,record=True,name=k.upper()+'_neumon'),dt=mon_neu_dt)
+        for k, vars in mon_ecs.items():
+            if (len(vars)>0) and (k.upper() in modules) and (self.pars['N'][k]>0):
+                self.network.add(StateMonitor(self.network[k.upper()],variables=vars,record=True,name=k.upper()+'_ecsmon'),dt=mon_neu_dt)
+        for k, vars in mon_syn.items():
+            if (len(vars)>0) and (k.upper() in modules) and (self.pars['N'][k]>0):
+                self.network.add(StateMonitor(self.network[k.upper()],variables=vars,record=True,name=k.upper()+'_synmon'),dt=mon_neu_dt)
+        # TODO: Rate and Spike Monitors
+        # # Add monitors (only for cells)
+        # for k, flag_mon in mon_rate.items():
+        #     # Only add if the number N_k>0
+        #     if flag_mon and (k.upper() in modules) and (self.pars['N'][k] > 0):
+        #         if self.pars['geom']['N_clusters']<2:
+        #             self.network.add(PopulationRateMonitor(self.network[k.upper()], name=k.upper()+'_poprate'))
+        #         else:
+        #             for cn,ci in enumerate(self.pars['geom'][k+'_cluster']):
+        #                 # Because subgroups require at the moment only contiguous indexes, you must use ci[0]:ci[-1]
+        #                 # TODO: does not check whether ci is of size 1: in this case it might not work
+        #                 self.network.add(PopulationRateMonitor(self.network[k.upper()][ci[0]:ci[-1]], name=k.upper() + '_poprate_'+str(cn)))
+        # for k, flag_mon in mon_spks.items():
+        #     # Only add if the number N_k>0
+        #     if flag_mon and (k.upper() in modules) and (self.pars['N'][k] > 0):
+        #         if transient>0:
+        #             # Simple error checking: you cannot estimate count correctly if you don't record all spikes with transient>0
+        #             assert record_spks[k],"Spike count cannot be estimated correctly when transient>0 and mon_spks['"+k+"'] is False: set it to True instead"
+        #         # Specify the first num_to_record[k] cells to record spikes from (default: all cells will be recorded)
+        #         if self.pars['geom']['N_clusters']<2:
+        #             # 'geom' is only specified in the ngn setup, but this assignment is required also for single-astro configurations
+        #             self.network.add(SpikeMonitor(self.network[k.upper()][:int(num_to_record[k])], name=k.upper()+'_spikes', record=record_spks[k]))
+        #         else:
+        #             for cn,ci in enumerate(self.pars['geom'][k+'_cluster']):
+        #                 # TODO: does not check whether ci is of size 1: in this case it might not work
+        #                 # Indexes of selected cells to record spikes from
+        #                 # Because subgroups require at the moment only contiguous indexes, you must use nsel[0]:nsel[-1]
+        #                 nsel = ci[:int(num_to_record[k])]
+        #                 self.network.add(SpikeMonitor(self.network[k.upper()][nsel[0]:nsel[-1]], name=k.upper() + '_spikes_'+str(cn), record=record_spks[k]))
 
         # Effective simulation
         if pname==None:
             # Run the network as it is
             self.network.run(duration,report='text')
         else:
+            # TODO: This handles the case of multiple simulations, when the parameter is given as an array of values
+            # TODO: Refer to network_classes_brian same field
             assert hasattr(pvals,'__len__'),"pvals must be an array-like type if pname!=None"
-            # The following make sure to have duration of the same length of pvals
-            if np.size(np.asarray(duration))<=np.size(pvals) and np.size(np.asarray(duration))==1:
-                duration = duration*np.ones(np.size(pvals))   # Address the case we want to simulate also for different durations
-            if pname=='rho':
-                if self.pars['geom']['N_clusters']<2:
-                    if hasattr(stimtype,'__length__'):
-                        assert np.size(stimtype)==np.size(pvals),'stimtype must be an array of the same length of pvals'
-                    elif stimtype=='full':
-                        stimtype = [stimtype] * np.size(pvals)
-            # The following will work for the clustered network too, but you need to provide rho by generateClusteredStimulus()
-            if pname!='rho-timed-array':
-                for index in range(len(pvals)): # len instead of size assure to pick the first axis
-                    if pname=='rho':
-                        self.updateParameters(pname,pvals[index],update=stimtype[index])
-                    else:
-                        self.updateParameters(pname,pvals[index])
-                    if include_ICs:
-                        # Generate a proper dictionary
-                        ICs_ = self._individualICs_from_dict(ICs,index)
-                        self._updatedInitialConditions(ICs_)
-                    # ## DEBUG
-                    # print(index,'\tix\t',np.amin(self.network['E'].ix),np.amax(self.network['E'].ix))
-                    # print(index,'\tsx\t',np.amin(self.network['E'].sx),np.amax(self.network['E'].sx))
-                    # return None
-                    ## Cumment to have a 'dry' run
-                    self.network.run(duration[index],report='text')
-            else:
-                assert (rho_baseline is not None),"pname==rho-timed-array requires specification of rho_baseline"
-                # This case requires first computing arrays of moments (to pass to mu/sigma functions in the namespace)
-                for cell in ['e','i']:
-                    # Reset to zero ix and sx from original parameter specification
-                    self.network[cell.upper()].ix = 0.0
-                    self.network[cell.upper()].sx = 0.0    # This should go inside _eqs_noise[cell] in case you would like to separate TimeArray and fixed fluctations
-                    # ix_ = cp.deepcopy(pvals)    # make a copy of pvals to manipulate
-                    ix_ = np.atleast_2d(np.zeros(np.shape(pvals)))
-                    for n in range(self.pars['geom']['N_clusters']):
-                        # Compute moments for E an I networks
-                        try:
-                            # This works if N_clusters>1
-                            ix_[n] = self.pars['N'][cell + 'x'][n]*self.pars['conn']['j' + cell + 'x']*pvals[n]*self.pars['lif'][cell]['ratet'][n]*self.pars['lif'][cell]['taum']
-                        except:
-                            # This is for the case of N_clusters<2
-                            ix_[n] = self.pars['N'][cell + 'x']*self.pars['conn']['j' + cell + 'x']*pvals[n]*self.pars['lif'][cell]['ratet']*self.pars['lif'][cell]['taum']
-                        ## DEBUG
-                        # print(n,'\tix\t', np.unique(ix_[n]))
-                    ## DEBUG
-                    # print('Complete: ix\t',ix_)
-                    # Convert them into TimeArrays. Assume that baseval is the first value in any row of mu/sigma arrays
-                    try:
-                        # The following line make sure to generate a baseline of as many elements as the number of clusters
-                        ix_baseline = self.pars['N'][cell + 'x']*self.pars['conn']['j' + cell + 'x']*rho_baseline*self.pars['lif'][cell]['ratet']*self.pars['lif'][cell]['taum']
-                    except:
-                        # Issue a warning if there is a mismatch in size for rho_baseline and proceed taking only the first element
-                        if len(rho_baseline)>1:
-                            ix_baseline = self.pars['N'][cell + 'x']*self.pars['conn']['j' + cell + 'x']*rho_baseline[0]*self.pars['lif'][cell]['ratet']*self.pars['lif'][cell]['taum']
-                            print("WARNING: size of rho_baseline does not match number of clusters nor is a scalar. Taking only the first element")
-                    ## DEBUG
-                    # print('baseline: ix_base\t',ix_baseline)
-                    self.network[cell.upper()].namespace['mu'] = TimeArray_from_stimulation(ix_,duration,stimtype,self.pars['N'],self.pars['geom'],
-                                                                                            cell_type=cell,baseval=ix_baseline,
-                                                                                            decimals=round_decimals,name='ix_'+cell)
-                    # Do the same for noise if present
-                    if self.__eqs_noise[cell]:
-                        sx_ = np.sqrt(self.pars['conn']['j' + cell + 'x']*ix_)
-                        self.network[cell.upper()].namespace['sigma'] = TimeArray_from_stimulation(sx_,duration,stimtype,self.pars['N'],self.pars['geom'],
-                                                                                                   cell_type=cell, baseval=np.sqrt(self.pars['conn']['j' + cell + 'x']*ix_baseline),
-                                                                                                   decimals=1, name='sx_'+cell)
-                        # self.network[cell.upper()].namespace['sx'] = 0.0
-                # In this case, when rho is a TimeArray stimulus, duration is a vector with individual time intervals,
-                # whose sum equals the total duration of the simulation (see memoryClusterTest in eig_simulator)
-                ## DEBUG
-                # print('ix\t',np.unique(ix_))
-                # print('sx\t',np.unique(sx_))
-                # Comment for 'dry' run
-                self.network.run(np.sum(duration), report='text')
+
+        # Code builder
         if build:
             # Build at the end
             device.build(directory=self._code_dir,clean=clean)
             self.__build = True
 
-            # # Clean /tmp directory (from files produced during standalone)
-            # fu.remove('brian*.log',dir='/tmp')
-            # fu.remove('brian*.py', dir='/tmp')
-            # # Clean code and produced output
-
             if return_mondict:
                 # Retrieve update list of modules names (including monitors)
                 modules = [m.name for m in iter(self.network.objects)]
-                # Build monitor names (rate and spks type -- brp is handled separately below)
-                if self.pars['geom']['N_clusters']<2:
-                    monitors = [c.upper()+'_'+mt for c in mon_keys for mt in ['spikes','poprate']]
-                else:
-                    monitors = [c.upper() + '_' + mt + '_' + str(cn) for c in mon_keys for mt in ['spikes', 'poprate'] for cn in range(self.pars['geom']['N_clusters'])]
-                mons = {'rate': {}, 'spks': {}, 'brp': {}}
-                if self.pars['geom']['N_clusters']>=2:
-                    for k in mons.keys():
-                        mons[k] = {name[0].lower(): {} for name in monitors}
+                monitors = [c.upper() + '_' + mt + 'mon' for c in mon_keys for mt in ['neu', 'ecs' , 'syn']]
+                mons = {'neu': {}, 'ecs': {}, 'syn': {}}
+
+                # # Build monitor names (rate and spks type -- brp is handled separately below)
+                # if self.pars['geom']['N_clusters']<2:
+                #     monitors = [c.upper()+'_'+mt for c in mon_keys for mt in ['spikes','poprate']]
+                # else:
+                #     monitors = [c.upper() + '_' + mt + '_' + str(cn) for c in mon_keys for mt in ['spikes', 'poprate'] for cn in range(self.pars['geom']['N_clusters'])]
+                # mons = {'rate': {}, 'spks': {}, 'brp': {}}
+                # if self.pars['geom']['N_clusters']>=2:
+                #     for k in mons.keys():
+                #         mons[k] = {name[0].lower(): {} for name in monitors}
 
                 for name in monitors:
                     if name in modules:
-                        if 'poprate' in name:
-                            if self.pars['geom']['N_clusters']<2:
-                                mons['rate'][name[0].lower()] = bu.monitor_to_dict(self.network[name], monitor_type='poprate', window='flat',width=rate_dt,transient=transient/second)
+                        if ('mon' in name):
+                            if 'neu' in name:
+                                mons['neu'][name[0].lower()] = bu.monitor_to_dict(self.network[name],monitor_type='state',transient=transient/second)
+                            elif 'ecs' in name:
+                                mons['neu'][name[0].lower()] = bu.monitor_to_dict(self.network[name],monitor_type='state',transient=transient/second)
+                            elif 'syn' in name:
+                                mons['neu'][name[0].lower()] = bu.monitor_to_dict(self.network[name],monitor_type='state',transient=transient/second)
                             else:
-                                # Retrieve cluster index
-                                ci = index_from_string(name)
-                                mons['rate'][name[0].lower()][ci] = bu.monitor_to_dict(self.network[name], monitor_type='poprate', window='flat',width=rate_dt,transient=transient/second)
-                        elif 'spikes' in name:
-                            if not record_spks[name[0].lower()]:
-                                if self.pars['geom']['N_clusters']<2:
-                                    # Only counts
-                                    mons['spks'][name[0].lower()] = bu.monitor_to_dict(self.network[name], monitor_type='spike', fields=['count'], transient=transient/second)
-                                else:
-                                    # Retrieve cluster index
-                                    ci = index_from_string(name)
-                                    mons['spks'][name[0].lower()][ci] = bu.monitor_to_dict(self.network[name], monitor_type='spike', fields=['count'], transient=transient/second)
-                            else:
-                                if self.pars['geom']['N_clusters']<2:
-                                    # Counts and spikes
-                                    mons['spks'][name[0].lower()] = bu.monitor_to_dict(self.network[name], monitor_type='spike', fields=['spk', 'count'],transient=transient/second)
-                                else:
-                                    # Retrieve cluster index
-                                    ci = index_from_string(name)
-                                    mons['spks'][name[0].lower()][ci] = bu.monitor_to_dict(self.network[name], monitor_type='spike', fields=['spk', 'count'], transient=transient/second)
+                                print('WARNING: No StateMonitor specified for this configuration')
+                                pass
+                        # # TODO: Update the following code for other types of monitors, when introduced
+                        # elif ('poprate' in name):
+                        #     if self.pars['geom']['N_clusters']<2:
+                        #         mons['rate'][name[0].lower()] = bu.monitor_to_dict(self.network[name], monitor_type='poprate', window='flat',width=rate_dt,transient=transient/second)
+                        #     else:
+                        #         # Retrieve cluster index
+                        #         ci = index_from_string(name)
+                        #         mons['rate'][name[0].lower()][ci] = bu.monitor_to_dict(self.network[name], monitor_type='poprate', window='flat',width=rate_dt,transient=transient/second)
+                        # elif 'spikes' in name:
+                        #     if not record_spks[name[0].lower()]:
+                        #         if self.pars['geom']['N_clusters']<2:
+                        #             # Only counts
+                        #             mons['spks'][name[0].lower()] = bu.monitor_to_dict(self.network[name], monitor_type='spike', fields=['count'], transient=transient/second)
+                        #         else:
+                        #             # Retrieve cluster index
+                        #             ci = index_from_string(name)
+                        #             mons['spks'][name[0].lower()][ci] = bu.monitor_to_dict(self.network[name], monitor_type='spike', fields=['count'], transient=transient/second)
+                        #     else:
+                        #         if self.pars['geom']['N_clusters']<2:
+                        #             # Counts and spikes
+                        #             mons['spks'][name[0].lower()] = bu.monitor_to_dict(self.network[name], monitor_type='spike', fields=['spk', 'count'],transient=transient/second)
+                        #         else:
+                        #             # Retrieve cluster index
+                        #             ci = index_from_string(name)
+                        #             mons['spks'][name[0].lower()][ci] = bu.monitor_to_dict(self.network[name], monitor_type='spike', fields=['spk', 'count'], transient=transient/second)
 
-                # Handling of BRP monitors (respectively for '*e' and '*i' synapses)
-                if self.pars['geom']['N_clusters']<2:
-                    for k in ['e','i']:
-                        if any([key[-1]==k and val for key,val in mon_brp.items()]):
-                            # First retrieve all brp monitors for '*k' synapses
-                            brp_mon_ = [bu.monitor_to_dict(self.network[name], monitor_type='state', transient=transient/second) for name in mon_brp_names if name[-1]==k]
-                            mons['brp'][k] = {}
-                            # Time trace is the same across all gamma monitors
-                            mons['brp'][k]['t'] = brp_mon_[0]['t']
-                            # Stack all gamma_S and save them in going-to-be brp
-                            brp = np.vstack([bm_['gamma_S'] for bm_ in brp_mon_])
-                            # Compute effective u(t)
-                            for i,gs in enumerate(brp):
-                                if i<glial_indexes['e'+k+'_index']:
-                                    brp[i] = u_(self.pars['syn']['e'+k]['u0'],self.pars['prer']['e'+k]['xi'],gs)
-                                else:
-                                    brp[i] = u_(self.pars['syn']['i'+k]['u0'], self.pars['prer']['i'+k]['xi'],gs)
-                            # Compute weighted average
-                            mons['brp'][k]['u'] = np.average(brp,weights=glial_indexes[k+'_weights'],axis=0)
-                else:
-                    mons['brp'] = {'e': {}, 'i': {}}
-                    for cn in range(self.pars['geom']['N_clusters']):
-                        for k in ['e','i']:
-                            # mons['brp'][k] = {}
-                            if any([key[-1]==k and val for key,val in mon_brp.items()]):
-                                # First retrieve all brp monitors for '*k' synapses
-                                # cn = index_from_string(name)    # Cluster index
-                                brp_mon_ = [bu.monitor_to_dict(self.network[name], monitor_type='state', transient=transient/second) for name in mon_brp_names if name.split('_'+str(cn))[0][-1]==k] # Take monitor name w/out index
-                                mons['brp'][k][cn] = {}
-                                try:
-                                    # Time trace is the same across all gamma monitors
-                                    mons['brp'][k][cn]['t'] = brp_mon_[0]['t']
-                                    # Stack all gamma_S and save them in going-to-be brp
-                                    brp = np.vstack([bm_['gamma_S'] for bm_ in brp_mon_])
-                                    # Compute effective u(t)
-                                    for i,gs in enumerate(brp):
-                                        if i<glial_indexes[cn]['e'+k+'_index']:
-                                            brp[i] = u_(self.pars['syn']['e'+k]['u0'],self.pars['prer']['e'+k]['xi'],gs)
-                                        else:
-                                            brp[i] = u_(self.pars['syn']['i'+k]['u0'], self.pars['prer']['i'+k]['xi'],gs)
-                                    # Compute weighted average
-                                    mons['brp'][k][cn]['u'] = np.average(brp,weights=glial_indexes[cn][k+'_weights'],axis=0)
-                                    if save_raw_brp:
-                                        mons['brp'][k][cn]['u_raw'] = brp
-                                except:
-                                    # When there is no synapse in the cluster to record (e.g. asymmetric case)
-                                    mons['brp'][k][cn]['t'] = np.atleast_1d([])
-                                    mons['brp'][k][cn]['u'] = np.atleast_1d([])
-                                    if save_raw_brp:
-                                        mons['brp'][k][cn]['u_raw'] = np.atleast_1d([])
-                    # # Clean dictionary of unwanted entries
-                    # mons['brp'] = gu.dict_stripper(mons['brp'])
-
-                # OLD CODE
-                # # Pop empty keys (This could be easily done by a recursive function but I am lazy)
-                # if self.pars['geom']['N_clusters']>1:
-                #     # In the case of clustered networks we have nested dictionaries, so we clean first the inner ones
-                #     # Work on a list version of mons keys -- this will not change as we pop different entries
-                #     for k in list(mons):
-                #         for kk in list(mons[k]):
-                #             if len(mons[k][kk].keys())<1:
-                #                 mons[k].pop(kk)
-                # # Then clean the top dictionary
-                # for k in list(mons):
-                #     if len(mons[k].keys())<1:
-                #         mons.pop(k)
+                # TODO: Currently Removed BRP (synaptic?) monitor handling
 
                 # Clean of monitors
                 mons = gu.dict_stripper(gu.dict_stripper(mons))
@@ -1096,3 +882,40 @@ class NEAGroup(object):
                 return mons
             else:
                 device.delete(force=True)
+
+#-----------------------------------------------------------------------------------------------------------------------
+# Testing classes
+#-----------------------------------------------------------------------------------------------------------------------
+if __name__=="__main__":
+    # Single Neuron configuration
+    nea = NEAGroup(N_e=1, N_i=0, N_g=0,
+                   nea_setup='l5e+ecs',
+                   ne_pars = {}, ni_pars = {}, ng_pars = {}, ecs_pars = {},
+                   ee_pars = 'default', ie_pars = 'same', ii_pars = 'default', ei_pars = 'same',
+                   ex_pars = {}, ix_pars = 'same', gx_pars = {},
+                   network_connectivity=False,
+                   network_geometry = None, network_topology = {}, N_clusters = 0,
+                   code_dir = './codegen')
+    # Simulation
+    mons = nea.simulate(duration=0.1*second,sim_dt=0.1*us,
+                 mon_neu={'e': [], 'i': [], 'g': []}, mon_neu_dt=0.5*ms,
+                 mon_ecs={'e': [], 'i': [], 'g': []}, mon_ecs_dt=0.5*ms,
+                 mon_syn={'ee': [], 'ie': [], 'ei': [], 'ii': []}, mon_syn_dt=0.5*ms,
+                 threads=2,
+                 safe_cpu=True,
+                 build=True,clean=True,
+                 enable_debug=False,
+                 return_mondict=True)
+
+    # Visualization
+    fig,axs = plt.subplots(4,1)
+    # axs[0].plot(mons['neu']['t'],mons['neu']['v'],'k-')
+    axs[1].plot(mons['neu']['t'],mons['neu']['v'],'k-')
+    axs[2].plot(mons['ecs']['t'],mons['ecs']['N_e'],'g-')
+    axs[3].plot(mons['ecs']['t'],mons['ecs']['Nt_s'],'y-')
+
+    #-----------------------------------------------------------------------------------------------------------------------
+    # Visualization
+    #-----------------------------------------------------------------------------------------------------------------------
+    plt.show()
+
