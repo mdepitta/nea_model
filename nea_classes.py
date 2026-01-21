@@ -251,6 +251,7 @@ def astrocyte_cell(N,params,name='astro*',method='rk4',dt=None):
         dn_Na/dt=-S*(3*I_NKP+3*I_EAAT-3*I_GAT-I_NKCC)/F + J_diff_Na*Lambda         : mole
         dn_K/dt=-S*(-I_Kir-2*I_NKP-I_EAAT-I_NKCC)/F + J_diff_K*Lambda              : mole
         dn_Cl/dt=S*(-I_GAT+2*I_NKCC+I_Cl+pi_GABA_Cl*I_GABA)/F + J_diff_Cl*Lambda   : mole
+        
         # Astrocyte-wide GABARs (w/ basal GABA activation)              
         dr_GABA/dt = -r_GABA_clipped/tau_GABA+w_GABA*(1-r_GABA_clipped)*(GABA_e-GABA0_e) : 1        
         r_GABA_clipped = clip(r_GABA,0,1)        : 1
@@ -607,17 +608,14 @@ def cell_ecs_connection(cell_source,ecs_target,source_id='neuron',name='c2e*',dt
     #     return None
 
 def astro_astro_connection(astro_source,astro_target,params,name='a2a*',dt=None):
-    # eqs = Equations('''
-    #         J_diff_Na_pre = -D_Na_a*(N_a_pre-N_a_post)   : mmolar/second (summed)
-    #         J_diff_K_pre = -D_K_a*(K_a_pre-K_a_post)     : mmolar/second (summed)
-    #         J_diff_Cl_pre = -D_Cl_a*(C_a_pre-C_a_post)   : mmolar/second (summed)
-    # ''')
     eqs = Equations('''
-            J_diff_Na_pre = -D_Na_a*(N_a_pre-N_a_post)   : mmolar/second (summed)
-            J_diff_K_pre = -D_K_a*(K_a_pre-K_a_post)     : mmolar/second (summed)
-            J_diff_Cl_pre = -D_Cl_a*(C_a_pre-C_a_post)   : mmolar/second (summed)
+            J_diff_Na_a_pre = -D_Na_a*(N_a_pre-N_a_post)   : mmolar/second (summed)
+            J_diff_K_a_pre = -D_K_a*(K_a_pre-K_a_post)     : mmolar/second (summed)
+            J_diff_Cl_a_pre = -D_Cl_a*(C_a_pre-C_a_post)   : mmolar/second (summed)
+            J_diff_Na_a_post = D_Na_a*(N_a_pre-N_a_post)   : mmolar/second (summed)
+            J_diff_K_a_post = D_K_a*(K_a_pre-K_a_post)     : mmolar/second (summed)
+            J_diff_Cl_a_post = D_Cl_a*(C_a_pre-C_a_post)   : mmolar/second (summed)
     ''')
-
 
     a2a = Synapses(astro_source,astro_target,eqs,
                    namespace=params,
@@ -659,11 +657,11 @@ def synaptic_connection_test(duration=0.5*second,code_dir='./codegen'):
     pars_astro['G0_e'] = pars_ecs['G0_e']
     pars_astro['GABA0_e'] = pars_ecs['GABA0_e']
 
-    # Update ecs parameters
-    pars_ecs['S_A'] = pars_astro['S']
-    pars_ecs['T_exp'] = pars_astro['T_exp']
-    pars_ecs['g_EAAT'] = pars_astro['g_EAAT']
-    pars_ecs['g_GAT'] = pars_astro['g_GAT']
+    # # Update ecs parameters
+    # pars_ecs['S_A'] = pars_astro['S']
+    # pars_ecs['T_exp'] = pars_astro['T_exp']
+    # pars_ecs['g_EAAT'] = pars_astro['g_EAAT']
+    # pars_ecs['g_GAT'] = pars_astro['g_GAT']
 
     # Update synaptic parameters
     pars_syn['D'] = pars_ecs['D_Glu_e'] if ttype=='glu' else pars_ecs['D_GABA_e']

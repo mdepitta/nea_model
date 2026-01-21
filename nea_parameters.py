@@ -6,8 +6,9 @@ import copy as cp
 import os, sys
 sys.path.append(os.path.join(os.path.expanduser('~'),'Ongoing.Projects/pycustommodules'))
 import general_utils as gu
+import ngn_topology as conn
 
-# Custom imports
+# Brian2 imports
 # from brian2.units.allunits import *
 from brian2.units import *
 from brian2.units.constants import avogadro_constant as N_A
@@ -324,8 +325,8 @@ def set_weights(w_val, w_rule=None, N=1):
 # -----------------------------------------------------------------------------------------------------------------------
 # ROUTINES FOR NETWORK PARAMETERS
 # -----------------------------------------------------------------------------------------------------------------------
-def nean_parameters(N_e, N_i, N_g, connectivity=True,
-        nean_setup='default',
+def nea_parameters(N_e, N_i, N_g, connectivity=True,
+        nea_setup='default',
         topology={}, p_conn={}, w_scaling={},
         spatial_geometry=None,
         ne_pars={}, ni_pars='same', ng_pars={}, ecs_pars={},
@@ -401,61 +402,61 @@ def nean_parameters(N_e, N_i, N_g, connectivity=True,
     # Default Synaptic connections
     pars_syn_default['ee'] = synapse_parameters(ttype='glu')
     pars_syn_default['ie'] = synapse_parameters(ttype='glu')
-    pars_syn_default['ie'] = synapse_parameters(ttype='gaba')
+    pars_syn_default['ei'] = synapse_parameters(ttype='gaba')
     pars_syn_default['ii'] = synapse_parameters(ttype='gaba')
 
     # TODO: --------------------Define Connectivity
     # Synaptic weight for connections (astro-to-syn connections are defined instead in gliot_parameters)
     # IMPORTANT: pars_conn will be finalized however at the end of the routine
     pars_conn = {'C': 0,  # Number of connections per neuron
-                 'G': 0,  # Number of connections per astrocyte
-                 'K': 0,
-                 # Number of total connections (unless given, it is computed internally once connections are created)
-                 'K_ee_v': 0,  # Vector of number of synapses/astrocyte for normalization of EE weights
-                 'K_ie_v': 0,  # Vector of number of synapses/astrocyte for normalization of IE weights
-                 'K_ei_v': 0,  # Vector of number of synapses/astrocyte for normalization of EI weights
-                 'K_ii_v': 0,  # Vector of number of synapses/astrocyte for normalization of II weights
-                 'K_ee': 0,  # Vector of number of EE synapses/astrocyte
-                 'K_ie': 0,  # Vector of number of IE synapses/astrocyte
-                 'K_ei': 0,  # Vector of number of EI synapses/astrocyte
-                 'K_ii': 0,  # Vector of number of II synapses/astrocyte
-                 'jee': 1.0,  # J_EE connections
-                 'jie': 1.0,  # J_IE connections
-                 'jei': 1.0,  # J_EI connections
-                 'jii': 1.0,  # J_II connections
-                 'jgg': 1.0,  # J_GG connections
-                 'wee': 1.0,  # W_EE connections
-                 'wie': 1.0,  # W_IE connections
-                 'wei': 1.0,  # W_EI connections
-                 'wii': 1.0,  # W_II connections
-                 'wsg': None,  # --> pars_glt['js] (added later)
-                 'cj': 1.0,
-                 # Scaling factor for synaptic connections (used by bifurcation analysis, see Stability.Analysis)
-                 'cw': 1.0,
-                 # Scaling factor for syn-astro connections (used by bifurcation analysis, see Stability.Analysis)
-                 'cx': 1.0,
-                 # Scaling factor for external const input to neurons (used by bifurcation analysis, see Stability.Analysis)
-                 'cs': 1.0,
-                 # Scaling factor for s.d. external input to neurons (used by bifurcation analysis, see Stability.Analysis)
-                 'gj': 1.0,  # Scaling factor for inhibitory synaptic weights (assuming J_EE = J_IE = J)
-                 'ge': 1.0,  # Scaling factor for J_EI = g_E * J_EE
-                 'gi': 1.0,  # Scaling factor for J_II = g_I * J_IE
-                 'fxi': 1.0,  # Scaling factor for xi_IE = f_xi * xi_EE (varies in [0,1/xi_EE])
-                 }
+        'G': 0,  # Number of connections per astrocyte
+        'K': 0,
+        # Number of total connections (unless given, it is computed internally once connections are created)
+        'K_ee_v': 0,  # Vector of number of synapses/astrocyte for normalization of EE weights
+        'K_ie_v': 0,  # Vector of number of synapses/astrocyte for normalization of IE weights
+        'K_ei_v': 0,  # Vector of number of synapses/astrocyte for normalization of EI weights
+        'K_ii_v': 0,  # Vector of number of synapses/astrocyte for normalization of II weights
+        'K_ee': 0,  # Vector of number of EE synapses/astrocyte
+        'K_ie': 0,  # Vector of number of IE synapses/astrocyte
+        'K_ei': 0,  # Vector of number of EI synapses/astrocyte
+        'K_ii': 0,  # Vector of number of II synapses/astrocyte
+        'jee': 1.0,  # J_EE connections
+        'jie': 1.0,  # J_IE connections
+        'jei': 1.0,  # J_EI connections
+        'jii': 1.0,  # J_II connections
+        'jgg': 1.0,  # J_GG connections
+        'wee': 1.0,  # W_EE connections
+        'wie': 1.0,  # W_IE connections
+        'wei': 1.0,  # W_EI connections
+        'wii': 1.0,  # W_II connections
+        'wsg': None,  # --> pars_glt['js] (added later)
+        'cj': 1.0,
+        # Scaling factor for synaptic connections (used by bifurcation analysis, see Stability.Analysis)
+        'cw': 1.0,
+        # Scaling factor for syn-astro connections (used by bifurcation analysis, see Stability.Analysis)
+        'cx': 1.0,
+        # Scaling factor for external const input to neurons (used by bifurcation analysis, see Stability.Analysis)
+        'cs': 1.0,
+        # Scaling factor for s.d. external input to neurons (used by bifurcation analysis, see Stability.Analysis)
+        'gj': 1.0,  # Scaling factor for inhibitory synaptic weights (assuming J_EE = J_IE = J)
+        'ge': 1.0,  # Scaling factor for J_EI = g_E * J_EE
+        'gi': 1.0,  # Scaling factor for J_II = g_I * J_IE
+        'fxi': 1.0,  # Scaling factor for xi_IE = f_xi * xi_EE (varies in [0,1/xi_EE])
+    }
     # Custom parameters
     pars_conn = gu.varargin(pars_conn, **kwargs)
 
     # Default weights' scaling rules (see set_weights() for rules)
     weights = {'jee': '1/sqrt_n',  # J_EE connections
-               'jie': '1/sqrt_n',  # J_IE connections
-               'jei': '1/sqrt_n',  # J_EI connections
-               'jii': '1/sqrt_n',  # J_II connections
-               'jgg': '1/n',  # J_GG connections
-               'wee': '1/sqrt_n',  # W_EE connections
-               'wie': '1/sqrt_n',  # W_IE connections
-               'wei': '1/sqrt_n',  # W_EI connections
-               'wii': '1/sqrt_n',  # W_II connections
-               }
+        'jie': '1/sqrt_n',  # J_IE connections
+        'jei': '1/sqrt_n',  # J_EI connections
+        'jii': '1/sqrt_n',  # J_II connections
+        'jgg': '1/n',  # J_GG connections
+        'wee': '1/sqrt_n',  # W_EE connections
+        'wie': '1/sqrt_n',  # W_IE connections
+        'wei': '1/sqrt_n',  # W_EI connections
+        'wii': '1/sqrt_n',  # W_II connections
+    }
     # Custom scaling rules
     weights = gu.varargin(weights, **w_scaling)
     # TODO: --------------------End of TODO for Connectivity
@@ -464,14 +465,17 @@ def nean_parameters(N_e, N_i, N_g, connectivity=True,
     keys_conn = ['ee', 'ie', 'ii', 'ei', 'gg', 'gee', 'gie', 'gii', 'gei', 'eeg', 'ieg', 'iig', 'eig']
     # Default values
     # TODO: --------------------Begin of TODO for Topology
-    if (nean_setup == 'model-A') or (nean_setup == 'model-B'):
+    if (nea_setup == 'model-A') or (nea_setup == 'model-B'):
         # Model A in Brunel, JCN 2000
         network_topology = dict(list(zip(keys_conn,['random-const-outdeg']*4 + [None] + ['s2g-random-const-outdeg']*4 + ['fixed']*4)))  # All connections are randomly picked (except gliotransmitter ones)
         # In this configuration the connectivity is provided by the user through 'ee'. 'gg' is initialized to 0. for completeness. glt_conn are set to 1. only for excitatory synapses.
         prob_conn = dict(list(zip(keys_conn, [1. if k not in ['gg','eig','iig'] else 0. for k in keys_conn])))
-    elif (nean_setup == 'single-astro'):
+    elif (nea_setup == 'single-astro'):
         network_topology = dict(list(zip(keys_conn, ['all-to-one'] + [None]*12)))
         prob_conn = dict(list(zip(keys_conn, [1. if 'ee' in k else 0. for k in keys_conn])))
+    elif (nea_setup == 'l5e+ecs'):
+        network_topology = dict(list(zip(keys_conn, ['all-to-one'] + [None]*12)))
+        prob_conn = dict(list(zip(keys_conn,[1. if k=='ee' else 0. for k in keys_conn])))
     # Handling of the probability
     prob_conn = gu.varargin(prob_conn,**p_conn)
     # TODO: --------------------End of TODO for Topology
@@ -483,7 +487,7 @@ def nean_parameters(N_e, N_i, N_g, connectivity=True,
 
     # Create default parameters -- cluster compatible
     # This block is going to create 'C_e' and 'C_i' which are then used to infer connection weights
-    if (nean_setup == 'model-A') or (nean_setup == 'model-B'):
+    if (nea_setup == 'model-A') or (nea_setup == 'model-B'):
         assert (np.size(list(p_conn.keys())) >= 1), "model-A and model-B setup require to specify one prob value for all connections (either as 'ee','ie','ei',ii')"
         if (network_geometry['N_clusters']>1)and(np.size(prob_conn['ee']==1)):
             # This is the case where we have clustering by prob_conn['ee] is a scalar: it extends to the matrix level
@@ -517,7 +521,7 @@ def nean_parameters(N_e, N_i, N_g, connectivity=True,
 
     # TODO: ------------- START Connectivity Settings -- the clustering mode should be disabled -- the rest should be fine
     # Set connectivity based on probability
-    if (nean_setup == 'model-A') or (nean_setup == 'model-B'):
+    if (nea_setup == 'model-A') or (nea_setup == 'model-B'):
         try:
             # If clustering is present, prob_conn['ee'] will be a matrix and the following will run
             pars_conn['C_e'] = (prob_conn['ee'].T @ network_geometry['N_e_cluster']).astype(np.int32)  # Use matrix product on transpose to get all afferents connections per cluster
@@ -549,11 +553,11 @@ def nean_parameters(N_e, N_i, N_g, connectivity=True,
     # If connectivity is False, the following provides default (demi-empty) dicts
     # TODO: Link to connectivity (conn) module
     N_conn, edges, coords = conn.ngn_connections(N_e, N_i, N_g,
-                                                connectivity=connectivity,
-                                                p_conn=prob_conn,
-                                                topology=network_topology,
-                                                spatial_geometry=network_geometry,
-                                                given_edges=given_edges)
+        connectivity=connectivity,
+        p_conn=prob_conn,
+        topology=network_topology,
+        spatial_geometry=network_geometry,
+        given_edges=given_edges)
     # TODO: ------------- END Connectivity Settings
 
     # Allocate population specific parameters
@@ -561,7 +565,7 @@ def nean_parameters(N_e, N_i, N_g, connectivity=True,
 
     # Neuron parameters
     pars_cell['e'] = set_module_parameters(module_pars=ne_pars, module_default=pars_cell_default['e'],module_same=pars_cell_default['e'])
-    if nean_setup == 'model-B':
+    if nea_setup == 'model-B':
         pars_cell['i'] = set_module_parameters(module_pars=ni_pars, module_default=pars_cell_default['i'],module_same=pars_cell_default['i'])
     else:
         pars_cell['i'] = set_module_parameters(module_pars=ni_pars, module_default=pars_cell_default['i'],module_same=pars_cell['e'])
@@ -572,7 +576,7 @@ def nean_parameters(N_e, N_i, N_g, connectivity=True,
     pars_ecs = set_module_parameters(module_pars=ecs_pars, module_default=pars_ecs_default,module_same=pars_ecs_default)
     # Synapse parameters
     pars_syn['ee'] = set_module_parameters(module_pars=ee_pars, module_default=pars_syn_default['ee'],module_same=pars_syn_default['ee'])
-    if nean_setup == 'model-B':
+    if nea_setup == 'model-B':
         pars_syn['ie'] = set_module_parameters(module_pars=ie_pars, module_default=pars_syn_default['ie'],module_same=pars_syn_default['ie'])
         pars_syn['ei'] = set_module_parameters(module_pars='same', module_same=pars_syn['ee'])
         pars_syn['ii'] = set_module_parameters(module_pars='same', module_same=pars_syn['ie'])
@@ -581,17 +585,16 @@ def nean_parameters(N_e, N_i, N_g, connectivity=True,
         pars_syn['ie'] = set_module_parameters(module_pars=ie_pars, module_default=pars_syn_default['ie'],module_same=pars_syn['ee'])
         pars_syn['ei'] = set_module_parameters(module_pars=ei_pars, module_default=pars_syn_default['ei'],module_same=pars_syn['ii'])
 
-    # TODO: ------------- START: Set synaptic weights: Currently based on LIF modeling
-    if ('jee' not in list(kwargs.keys())): pars_conn['jee'] = set_weights((pars_cell['e']['vt']-pars_cell['e']['vr']),weights['jee'], pars_conn['C_e'])
-    if ('jie' not in list(kwargs.keys())): pars_conn['jie'] = set_weights((pars_cell['i']['vt']-pars_cell['i']['vr']),weights['jie'], pars_conn['C_e'])
-    if ('jei' not in list(kwargs.keys())): pars_conn['jei'] = set_weights((pars_cell['e']['vt']-pars_cell['e']['vr']),weights['jei'], pars_conn['C_i'])
-    if ('jii' not in list(kwargs.keys())): pars_conn['jii'] = set_weights((pars_cell['i']['vt']-pars_cell['i']['vr']),weights['jii'], pars_conn['C_i'])
-    # TODO: ------------- END: Set synaptic weights: Currently based on LIF modeling
+    # NOTE: In the NEA setup the weights are only taken proportional to the normalized depolarization scale
+    if ('jee' not in list(kwargs.keys())): pars_conn['jee'] = set_weights(1.0,weights['jee'], pars_conn['C_e'])
+    if ('jie' not in list(kwargs.keys())): pars_conn['jie'] = set_weights(1.0,weights['jie'], pars_conn['C_e'])
+    if ('jei' not in list(kwargs.keys())): pars_conn['jei'] = set_weights(1.0,weights['jei'], pars_conn['C_i'])
+    if ('jii' not in list(kwargs.keys())): pars_conn['jii'] = set_weights(1.0,weights['jii'], pars_conn['C_i'])
 
-    # TODO: ------------- START: Set glia network weight
-    # Set interconnecting glial weights
+    # TODO: ------------- START: Revise glia network weights
+    # Set interconnecting glial weights (also taken proportional to an arbitrary normalized depolarization scale
     # Later we will check If C_g!=G and rescale J_gg accordingly. This is actually redundant
-    if ('jgg' not in list(kwargs.keys())): pars_conn['jgg'] = set_weights((pars_lif['g']['vt']-pars_lif['g']['vr']),weights['jgg'], pars_conn['C_g'])
+    if ('jgg' not in list(kwargs.keys())): pars_conn['jgg'] = set_weights(1.0,weights['jgg'], pars_conn['C_g'])
     # TODO: In a clustered network this should be provided as a vector of size 1xN_clusters in future MFA implementations that might deal with clustered networks
     pars_conn['J_gg'] = np.mean(pars_conn['jgg'],dtype=int)   # Create a mean value needed for the computation of moments in ICs reassignment for the spiking neuron
     # TODO: ------------- END: Set glia network weight
@@ -613,9 +616,9 @@ def nean_parameters(N_e, N_i, N_g, connectivity=True,
                 for ci,gid in enumerate(glia_id):
                     # Get how many synapses per glia cell within each cluster we have
                     _, pars_conn['K'][ci] = np.unique(np.r_[edges['gee'][-1][np.isin(edges['gee'][-1],gid)],
-                                                            edges['gie'][-1][np.isin(edges['gie'][-1],gid)],
-                                                            edges['gei'][-1][np.isin(edges['gei'][-1],gid)],
-                                                            edges['gii'][-1][np.isin(edges['gii'][-1],gid)]], return_counts=True)
+                    edges['gie'][-1][np.isin(edges['gie'][-1],gid)],
+                    edges['gei'][-1][np.isin(edges['gei'][-1],gid)],
+                    edges['gii'][-1][np.isin(edges['gii'][-1],gid)]], return_counts=True)
             # Create per-synapse values of number of connections for the associated astrocyte -- These K_vals represent the normalization terms for all synapses i.e.
             K_vals = {}  # Temporary dictionary whereto dump counts per synapse type
             for k in ['ee','ei','ie','ii']:
@@ -676,22 +679,23 @@ def nean_parameters(N_e, N_i, N_g, connectivity=True,
     #TODO: ------------- END: Connectivity update
 
     # If G and c_g differ the following rescales jgg by G rather than C_g. This is because extsynstim_paramaeters later uses 'G' for computation of ratet and not 'C_g'
+    # NOTE: All the weights are taken proportional to normalized depolarization scale
     # TODO: you should fix K and G based on the topology of the network and compute them by formulas, rather than making them realization dependent -- The only way to bypass this at the moment is assigning J_gg and W_xx
     if ('jgg' not in kwargs.keys())and(any(np.atleast_1d(np.abs(pars_conn['G']-pars_conn['C_g'])))):
-        pars_conn['jgg'] = set_weights(pars_lif['g']['vt']-pars_lif['g']['vr'],weights['jgg'],pars_conn['G'])
+        pars_conn['jgg'] = set_weights(1.0,weights['jgg'],pars_conn['G'])
         pars_conn['J_gg'] = np.mean(pars_conn['jgg'],dtype=int)
     for k in ['ee','ie','ei','ii']:
         if spatial_geometry==None:
-            if ('w'+k not in list(kwargs.keys())): pars_conn['w'+k] = set_weights((pars_lif['g']['vt']-pars_lif['g']['vr'])*np.ones(np.size(pars_conn['K_'+k+'_v'])),weights['w'+k],pars_conn['K_'+k+'_v'])
+            if ('w'+k not in list(kwargs.keys())): pars_conn['w'+k] = set_weights(np.ones(np.size(pars_conn['K_'+k+'_v'])),weights['w'+k],pars_conn['K_'+k+'_v'])
         else:
-            if ('w'+k not in list(kwargs.keys())): pars_conn['w' + k] = set_weights(pars_lif['g']['vt'] - pars_lif['g']['vr'],weights['w'+k],np.mean([pars_conn['K_min'],pars_conn['K_max']]))
+            if ('w'+k not in list(kwargs.keys())): pars_conn['w' + k] = set_weights(1.0,weights['w'+k],np.mean([pars_conn['K_min'],pars_conn['K_max']]))
 
     # TODO: ------------- START: Refine weights based on E-I balance
-    if nean_setup == 'model-A':
+    if nea_setup == 'model-A':
         pars_conn['jie'] = pars_conn['jee']
         pars_conn['jii'] = pars_conn['jee']*pars_conn['gj']
         pars_conn['jei'] = pars_conn['jee']*pars_conn['gj']
-    elif nean_setup == 'model-B':
+    elif nea_setup == 'model-B':
         pars_conn['jei'] = pars_conn['ge']*pars_conn['jee']
         pars_conn['jii'] = pars_conn['gi']*pars_conn['jie']
 
@@ -702,19 +706,19 @@ def nean_parameters(N_e, N_i, N_g, connectivity=True,
     # TODO: ------------- END: Refine weights based on E-I balance
 
     # TODO: ------------- START: Randomize ICs
-    # NOTE: this option is currently used to avoid synch firing when the network is fed by const input to all neurons
-    for k, v in rand_ics.items():
-        if k == 'e':
-            N_ = N_e
-        elif k == 'i':
-            N_ = N_i
-        else:
-            N_ = N_g
-        if v:
-            # pars_lif[k]['ICs'] = (pars_lif[k]['vr']-pars_lif[k]['vl'])+1.05*(pars_lif[k]['vt']-pars_lif[k]['vr'])*np.random.random((N_))
-            pars_lif[k]['ICs'] = (pars_lif[k]['vr'] - pars_lif[k]['vl']) + (pars_lif[k]['vt'] - pars_lif[k]['vr'])*np.random.random((N_))
-        else:
-            pars_lif[k]['ICs'] = pars_lif[k]['vr']*np.ones(N_)
+    # # NOTE: this option is currently used to avoid synch firing when the network is fed by const input to all neurons
+    # for k, v in rand_ics.items():
+    #     if k == 'e':
+    #         N_ = N_e
+    #     elif k == 'i':
+    #         N_ = N_i
+    #     else:
+    #         N_ = N_g
+    #     if v:
+    #         # pars_lif[k]['ICs'] = (pars_lif[k]['vr']-pars_lif[k]['vl'])+1.05*(pars_lif[k]['vt']-pars_lif[k]['vr'])*np.random.random((N_))
+    #         pars_lif[k]['ICs'] = (pars_lif[k]['vr'] - pars_lif[k]['vl']) + (pars_lif[k]['vt'] - pars_lif[k]['vr'])*np.random.random((N_))
+    #     else:
+    #         pars_lif[k]['ICs'] = pars_lif[k]['vr']*np.ones(N_)
     # TODO: ------------- END: Randomize ICs
 
     # Return update parameters
@@ -949,7 +953,7 @@ def nean_parameters(N_e,N_i,N_g,connectivity=True,
     """
 
     # Network parameters
-    plif,psyn,pglt,ppre,pconn,Nconn,edges,coords,geom = ngn_parameters(N_e,N_i,N_g,connectivity=connectivity,
+    plif,psyn,pglt,ppre,pconn,Nconn,edges,coords,geom = nea_parameters(N_e,N_i,N_g,connectivity=connectivity,
                                                            spatial_geometry=spatial_geometry,
                                                            ngn_setup = ngn_setup,
                                                            topology=topology,
@@ -1018,13 +1022,13 @@ def nean_parameters(N_e,N_i,N_g,connectivity=True,
         plif[k]['sx'] = np.sqrt(pars_conn['j'+k+'x']*plif[k]['ix'])
         # Glia is conditionally handled in the class with deterministic module without ix and sx as parameters (an alternative could be to declare ix an sx also in the deterministic case)
 
-    # Make parameters suitable for assignment in the presence of clustering
-    plif = check_clustering(plif,geom,pars_to_check=['ix','sx'])
+    # # Make parameters suitable for assignment in the presence of clustering
+    # plif = check_clustering(plif,geom,pars_to_check=['ix','sx'])
 
     # return plif,pars_mhv,pglt,pars_prer,pars_conn,Cconn,Nconn,edges,syn_conn,spk
     return plif,pars_mhv,pglt,pars_prer,pars_conn,Nconn,edges,syn_conn,spk,coords,geom
 
-def nea_setup_parameters(N_e=0, N_i=0, N_g=0, nean_setup='default',
+def nea_setup_parameters(N_e=0, N_i=0, N_g=0, nea_setup='default',
         connectivity=True,N_clusters=0,
         spatial_geometry=None,topology={},
         ne_pars={}, ni_pars={}, ng_pars={}, glt_pars={},
@@ -1038,17 +1042,34 @@ def nea_setup_parameters(N_e=0, N_i=0, N_g=0, nean_setup='default',
         **kwargs):
     # Provides model parameters for different setups
     # It is a wrapper of different methods optimized to pass parameters to the Brian Class
-    pars = {}
-    pars['cell'], pars['syn'], pars['ecs'], pars['conn'], \
-    pars['N'], pars['edges'], pars['syn_conn'],
-    pars['coords'], pars['geom']
+    pars = {k: {} for k in ['cell','syn','ecs','conn','N','edges','syn_conn','coords','geom']}
 
-    if nean_setup in ['l5e'] :
+    if nea_setup in ['l5e'] :
         pars['cell']['e'] = set_module_parameters(module_pars=ne_pars, module_default=neuron_parameters(model='l5e'),module_same=neuron_parameters(model='l5e'))
+    elif nea_setup=='l5e+ecs':
+        pars['cell'],pars['syn'],pars['ecs'],_,pars['N'],_,_,_ = nea_parameters(1,0,0,nea_setup=nea_setup,ne_pars=ne_pars,
+                                                                        spatial_geometry=None,connectivity=False)
+        # TODO: Automatic assignment of connections in special scenario (for automatic later handling of monitors)
+        pars['N']['ee'] = 1
+        pars['cell']['e']['HBC0_e'] = pars['ecs']['HBC0_e']
+        # TODO: Revise according to different synaptic schemes (once l5i is included)
+        try:
+            pars['syn']['ee']['D'] = pars['ecs']['D_Glu_e']
+        except:
+            pass
+        try:
+            pars['syn']['ei']['D'] = pars['ecs']['D_GABA_e']
+        except:
+            pass
+        # Clean unused entries
+        for k in ['i','g']:
+            del pars['cell'][k]
+        for k in ['ei','ii','ie']:
+            del pars['syn'][k]
 
-    elif nean_setup=='l5e+e':
-
-    elif nean_setup=='single-nea':
+    elif nea_setup=='l5e+i':
+        pass
+    elif nea_setup=='single-nea':
 
         '''
         This configuration only needs to specify:
@@ -1155,7 +1176,7 @@ def nea_setup_parameters(N_e=0, N_i=0, N_g=0, nean_setup='default',
         # 'geometry' is currently not used in the single-astro configuration
         pars['geom'] = geometry_parameters(N_e,0,N_g,None)
 
-    elif ngn_setup in ['model-A', 'default']:
+    elif nea_setup in ['model-A', 'default']:
         '''
         Model A by Brunel, JCN 2000. This also assumes
         Only p_conn = {'ee' : prob} needs be specified.
@@ -1165,7 +1186,7 @@ def nea_setup_parameters(N_e=0, N_i=0, N_g=0, nean_setup='default',
         pars['lif'], pars['syn'], pars['glt'], \
         pars['prer'], pars['conn'], \
         pars['N'], pars['edges'], pars['syn_conn'], _,\
-        pars['coords'], pars['geom'] = ngn_sp_parameters(N_e, N_i, N_g,
+        pars['coords'], pars['geom'] = nea_setup_parameters(N_e, N_i, N_g,
                                                         p_conn=p_conn,
                                                         connectivity=connectivity,
                                                         N_clusters=N_clusters,
@@ -1192,15 +1213,26 @@ def nea_setup_parameters(N_e=0, N_i=0, N_g=0, nean_setup='default',
             else:
                 if isinstance(pp, np.generic): p = p.item()
 
+    return pars
 
 if __name__=="__main__":
-    #--------------------------------------------------------------------------------------------
-    # Testing different E_GAT
-    #--------------------------------------------------------------------------------------------
-    p_ecs = ecs_parameters()
-    p_ast = astrocyte_parameters()
+    # #--------------------------------------------------------------------------------------------
+    # # Testing different E_GAT
+    # #--------------------------------------------------------------------------------------------
+    # p_ecs = ecs_parameters()
+    # p_ast = astrocyte_parameters()
+    #
+    # E_Na = NernstPotential(p_ecs['N0_e'],p_ast['N0_a'],1,p_ast['T_exp'])
+    # E_Cl = NernstPotential(p_ecs['C0_e'], p_ast['C0_a'], -1, p_ast['T_exp'])
+    # E_GAT = 0.5*(3*E_Na+E_Cl+ThermalPotential(p_ast['T_exp'])*np.log(p_ecs['GABA0_e']/p_ast['GABA0_a']))
+    # print('E_GAT\t',E_GAT)
 
-    E_Na = NernstPotential(p_ecs['N0_e'],p_ast['N0_a'],1,p_ast['T_exp'])
-    E_Cl = NernstPotential(p_ecs['C0_e'], p_ast['C0_a'], -1, p_ast['T_exp'])
-    E_GAT = 0.5*(3*E_Na+E_Cl+ThermalPotential(p_ast['T_exp'])*np.log(p_ecs['GABA0_e']/p_ast['GABA0_a']))
-    print('E_GAT\t',E_GAT)
+    #--------------------------------------------------------------------------------------------
+    # Testing of nea
+    #--------------------------------------------------------------------------------------------
+    # pars_cell, pars_syn, pars_ecs, pars_conn, N_conn, edges, coords, network_geometry = nea_parameters(1,0,0,connectivity=False,
+    #     nea_setup='l5e+ecs',
+    #     spatial_geometry=None)
+    pars = nea_setup_parameters(1,0,0,nea_setup='l5e+ecs')
+    print(pars)
+    # print('check')

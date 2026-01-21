@@ -4,6 +4,8 @@ import copy as cp
 import multiprocessing as mpr
 
 from brian2 import *
+from brian2.units.constants import faraday_constant as F
+from functions_brianlib import ThermalPotential,NernstPotential,Hill,HeavisideFunction
 import nea_parameters as neapars
 import nea_classes as neamod
 
@@ -74,15 +76,14 @@ class NEAGroup(object):
                     N_i = 1
                 if pars_dict==None:
                     self.pars = neapars.nea_setup_parameters(N_e,N_i,0,nea_setup=nea_setup,
-                                                     connectivity=network_connectivity,N_clusters=0,
-                                                     ne_pars = ne_pars,ng_pars=ng_pars, ecs_pars=ecs_pars,
-                                                     ex_pars=ex_pars,gx_pars=gx_pars,prer_ex_pars=prer_ex_pars,
-                                                     prer_gx_pars=prer_gx_pars,
+                                                     connectivity=False,N_clusters=0,
+                                                     ne_pars = ne_pars, ecs_pars=ecs_pars,
+                                                     ex_pars=ex_pars,gx_pars=gx_pars,
                                                      **kwargs)
                 else:
                     # Load parameters from MF curves
                     # TODO: Up to ecs_pars assignments are correct. After they need to be revised based on the final structure of pars_dict
-                    self.pars = neapars.ngn_setup_parameters(N_e,N_i,0,ngn_setup=nea_setup,
+                    self.pars = neapars.nea_setup_parameters(N_e,N_i,0,ngn_setup=nea_setup,
                                                      connectivity=network_connectivity,N_clusters=0,
                                                      ne_pars=pars_dict['cell']['e'],ni_pars=pars_dict['cell']['i'],ng_pars=pars_dict['cell']['g'],
                                                      ecs_pars=pars_dict['ecs'],
@@ -180,11 +181,11 @@ class NEAGroup(object):
             # Generate neuronal compartments
             NX = neamod.periodic_nodes(1,10*Hz,name='src*',dt=1*ms)
             # Single neuron coupling
-            N = neamod.neuron_cell(1,pars['cell']['e'],model='l5e',name='neu*',method='euler')
+            N = neamod.neuron_cell(1,pars['cell']['e'],model='l5e',name='E_neu*',method='euler')
             N.v = -70*mV
 
             # Generate ecs compartments
-            ECS = neamod.ecs_space(1,pars['ecs'],coupling='n',name='ecs*',method='euler')
+            ECS = neamod.ecs_space(1,pars['ecs'],coupling='n',name='E_ecs*',method='euler')
             # # Generate a distal ecs compartment
             ECSO = neamod.ecs_space(1,pars['ecs'],coupling='none',name='ecso*',method='euler')
 
@@ -202,7 +203,7 @@ class NEAGroup(object):
             E2E.connect(i=[0],j=[0])
 
             # Synapses
-            S = neamod.synaptic_connection(NX,ECS,pars['syn']['ee'],sinput='glu',name='syn*')
+            S = neamod.synaptic_connection(NX,ECS,pars['syn']['ee'],sinput='glu',name='EE*')
             S.connect(i=[0],j=[0])
             # Assign default parameters
             # TODO: correct dictionary entries once finalized in the parameter module
@@ -210,7 +211,8 @@ class NEAGroup(object):
             S.Nt_rel = pars['syn']['ee']['Nt_rel']
             S.Lambda_s = pars['syn']['ee']['Lambda_s']
             # TODO: ttype below won't work -- delete this comment once fixed
-            S.Nt0_e = pars['ecs']['G0_e'] if ttype=='glu' else pars['ecs']['GABA0_e']
+            # S.Nt0_e = pars['ecs']['G0_e'] if ttype=='glu' else pars['ecs']['GABA0_e']
+            S.Nt0_e = pars['ecs']['G0_e']
             # Set initial conditions
             S.r = 0.0
             S.nt_s = 0.0*mole
@@ -697,6 +699,7 @@ class NEAGroup(object):
             mon_spks_default = {'e': False, 'i': False, 'g': False}
             num_to_record_default = {'e': self.pars['N']['e']}
             syn_to_record_default = {}
+            mon_keys = ['e']
 
 
         # elif self._nea_setup=='single-astro':
@@ -767,14 +770,14 @@ class NEAGroup(object):
 
         # TODO: Add rates and spike monitors for
         for k, vars in mon_neu.items():
-            if (len(vars)>0) and (k.upper() in modules) and (self.pars['N'][k]>0):
-                self.network.add(StateMonitor(self.network[k.upper()],variables=vars,record=True,name=k.upper()+'_neumon'),dt=mon_neu_dt)
+            if (len(vars)>0) and (self.pars['N'][k]>0):
+                self.network.add(StateMonitor(self.network[k.upper()+'_neu'],variables=vars,record=True,name=k.upper()+'_neumon',dt=mon_neu_dt))
         for k, vars in mon_ecs.items():
-            if (len(vars)>0) and (k.upper() in modules) and (self.pars['N'][k]>0):
-                self.network.add(StateMonitor(self.network[k.upper()],variables=vars,record=True,name=k.upper()+'_ecsmon'),dt=mon_neu_dt)
+            if (len(vars)>0) and (self.pars['N'][k]>0):
+                self.network.add(StateMonitor(self.network[k.upper()+'_ecs'],variables=vars,record=True,name=k.upper()+'_ecsmon',dt=mon_neu_dt))
         for k, vars in mon_syn.items():
-            if (len(vars)>0) and (k.upper() in modules) and (self.pars['N'][k]>0):
-                self.network.add(StateMonitor(self.network[k.upper()],variables=vars,record=True,name=k.upper()+'_synmon'),dt=mon_neu_dt)
+            if (len(vars)>0) and (self.pars['N'][k]>0):
+                self.network.add(StateMonitor(self.network[k.upper()],variables=vars,record=True,name=k.upper()+'_synmon',dt=mon_neu_dt))
         # TODO: Rate and Spike Monitors
         # # Add monitors (only for cells)
         # for k, flag_mon in mon_rate.items():
@@ -823,7 +826,8 @@ class NEAGroup(object):
             if return_mondict:
                 # Retrieve update list of modules names (including monitors)
                 modules = [m.name for m in iter(self.network.objects)]
-                monitors = [c.upper() + '_' + mt + 'mon' for c in mon_keys for mt in ['neu', 'ecs' , 'syn']]
+                monitors = [mn for mn in modules if ('mon' in mn)]
+                # monitors = [c.upper() + '_' + mt + 'mon' for c in mon_keys for mt in ['neu', 'ecs' , 'syn']]
                 mons = {'neu': {}, 'ecs': {}, 'syn': {}}
 
                 # # Build monitor names (rate and spks type -- brp is handled separately below)
@@ -840,11 +844,12 @@ class NEAGroup(object):
                     if name in modules:
                         if ('mon' in name):
                             if 'neu' in name:
-                                mons['neu'][name[0].lower()] = bu.monitor_to_dict(self.network[name],monitor_type='state',transient=transient/second)
+                                # mons['neu'][name[0].lower()] = bu.monitor_to_dict(self.network[name],monitor_type='state',transient=transient/second)
+                                mons['neu'][name.lower().partition('_')[0]] = bu.monitor_to_dict(self.network[name],monitor_type='state',transient=transient/second)
                             elif 'ecs' in name:
-                                mons['neu'][name[0].lower()] = bu.monitor_to_dict(self.network[name],monitor_type='state',transient=transient/second)
+                                mons['ecs'][name.lower().partition('_')[0]] = bu.monitor_to_dict(self.network[name],monitor_type='state',transient=transient/second)
                             elif 'syn' in name:
-                                mons['neu'][name[0].lower()] = bu.monitor_to_dict(self.network[name],monitor_type='state',transient=transient/second)
+                                mons['syn'][name.lower().partition('_')[0]] = bu.monitor_to_dict(self.network[name],monitor_type='state',transient=transient/second)
                             else:
                                 print('WARNING: No StateMonitor specified for this configuration')
                                 pass
@@ -893,14 +898,14 @@ if __name__=="__main__":
                    ne_pars = {}, ni_pars = {}, ng_pars = {}, ecs_pars = {},
                    ee_pars = 'default', ie_pars = 'same', ii_pars = 'default', ei_pars = 'same',
                    ex_pars = {}, ix_pars = 'same', gx_pars = {},
-                   network_connectivity=False,
+                   network_connectivity=True,
                    network_geometry = None, network_topology = {}, N_clusters = 0,
                    code_dir = './codegen')
-    # Simulation
-    mons = nea.simulate(duration=0.1*second,sim_dt=0.1*us,
-                 mon_neu={'e': [], 'i': [], 'g': []}, mon_neu_dt=0.5*ms,
-                 mon_ecs={'e': [], 'i': [], 'g': []}, mon_ecs_dt=0.5*ms,
-                 mon_syn={'ee': [], 'ie': [], 'ei': [], 'ii': []}, mon_syn_dt=0.5*ms,
+    # # Simulation
+    mons = nea.simulate(duration=0.5*second,sim_dt=0.1*us,
+                 mon_neu=None, mon_neu_dt=0.5*ms,
+                 mon_ecs=None, mon_ecs_dt=0.5*ms,
+                 mon_syn=None, mon_syn_dt=0.5*ms,
                  threads=2,
                  safe_cpu=True,
                  build=True,clean=True,
@@ -910,9 +915,9 @@ if __name__=="__main__":
     # Visualization
     fig,axs = plt.subplots(4,1)
     # axs[0].plot(mons['neu']['t'],mons['neu']['v'],'k-')
-    axs[1].plot(mons['neu']['t'],mons['neu']['v'],'k-')
-    axs[2].plot(mons['ecs']['t'],mons['ecs']['N_e'],'g-')
-    axs[3].plot(mons['ecs']['t'],mons['ecs']['Nt_s'],'y-')
+    axs[1].plot(mons['neu']['e']['t'],mons['neu']['e']['v'].T,'k-')
+    axs[2].plot(mons['ecs']['e']['t'],mons['ecs']['e']['N_e'].T,'g-')
+    axs[3].plot(mons['syn']['ee']['t'],mons['syn']['ee']['Nt_s'].T,'y-')
 
     #-----------------------------------------------------------------------------------------------------------------------
     # Visualization
